@@ -1,0 +1,64 @@
+trigger:
+  branches:
+    include:
+      - main
+
+pool:
+  name: Default
+
+variables:
+  imageName: 'faizul56/dotnetapp'
+  registryLoginServer: 'docker.io'
+  tag: '$(Build.BuildId)'
+
+steps:
+# 1) Checkout your code
+- checkout: self
+
+# 2) Build & push Docker image to your registry
+- task: Docker@2
+  displayName: 'Build & Push Image to Docker Registry'
+  inputs:
+    # Use the Docker Registry connection you just created
+    containerRegistry: 'docker-registry-conn'
+    # Repository name (registry will prepend registryLoginServer)
+    repository: '$(imageName)'
+    command: 'buildAndPush'
+    Dockerfile: '**/Dockerfile'
+    tags: |
+      $(tag)
+      latest
+
+# 3) (Optional) Scan with Trivy
+- task: PowerShell@2
+  displayName: '🛡️ Trivy Vulnerability Scan'
+  inputs:
+    targetType: 'inline'
+    script: |
+      $env:PATH = "C:\ProgramData\chocolatey\bin;$env:PATH"
+      if (-not (Test-Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY)) {
+        New-Item -ItemType Directory -Path $env:BUILD_ARTIFACTSTAGINGDIRECTORY
+      }
+      $image = "$($env:REGISTRYLOGINSERVER)/$($env:IMAGENAME):$($env:TAG)"
+      Write-Host "Scanning image $image with Trivy…"
+      trivy image `
+        --no-progress `
+        --format json `
+        --output "$($env:BUILD_ARTIFACTSTAGINGDIRECTORY)\trivy-report.json" `
+        $image
+      Write-Host "✅ Trivy report at $($env:BUILD_ARTIFACTSTAGINGDIRECTORY)\trivy-report.json"
+
+# 4) Publish the Trivy report
+- task: PublishBuildArtifacts@1
+  displayName: '📄 Publish Trivy Report'
+  inputs:
+    targetPath: '$(Build.ArtifactStagingDirectory)\trivy-report.json'
+    artifact: 'trivy-report'
+
+# 5) Dummy artifact to trigger CD
+- task: PublishBuildArtifacts@1
+  displayName: 'Publish dummy artifact'
+  inputs:
+    PathtoPublish: 'README.md'
+    ArtifactName: 'drop'
+    publishLocation: 'Container'
